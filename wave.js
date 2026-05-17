@@ -2,6 +2,11 @@
 (function () {
   'use strict';
 
+  /* ── zone visibility — ?waves=top | bottom | both (default) ─────── */
+  const _wParam = new URLSearchParams(location.search).get('waves') || 'both';
+  const SHOW_TOP = _wParam !== 'bottom';
+  const SHOW_BOT = _wParam !== 'top';
+
   /* ── canvas ──────────────────────────────────────────────────────── */
   const canvas = document.createElement('canvas');
   canvas.style.cssText =
@@ -244,10 +249,8 @@
     ctx.fillStyle = 'rgba(15,15,15,0.20)';
     ctx.fillRect(0, 0, W, H);
 
-    drawZone(t, true);
-    drawZone(t, false);
-    drawColourLayer(t, true);
-    drawColourLayer(t, false);
+    if (SHOW_TOP) { drawZone(t, true);  drawColourLayer(t, true);  }
+    if (SHOW_BOT) { drawZone(t, false); drawColourLayer(t, false); }
   }
 
   requestAnimationFrame(frame);
