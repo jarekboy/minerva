@@ -41,7 +41,7 @@
     const t = forced || (w < 768 ? 'lo' : w < 1024 ? 'md' : 'hi');
     tier = t;
     if (t === 'lo') {
-      N_ROWS = 22; N_COLS = 10; N_SEGS = 38; C_ROWS = forced ? 8 : 0; FPS_TARGET = 30;
+      N_ROWS = 22; N_COLS = 10; N_SEGS = 38; C_ROWS = 6;  FPS_TARGET = 30;
     } else if (t === 'md') {
       N_ROWS = 52; N_COLS = 20; N_SEGS = 80; C_ROWS = 20; FPS_TARGET = 60;
     } else {
