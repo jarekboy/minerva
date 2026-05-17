@@ -1,8 +1,8 @@
-/* Minerva — monochrome 3-D wave + crystal-diffraction colour layer */
+/* Minerva — adaptive retina wave + crystal-diffraction layer */
 (function () {
   'use strict';
 
-  /* ── canvas ─────────────────────────────────────────────────────────── */
+  /* ── canvas ──────────────────────────────────────────────────────────── */
   const canvas = document.createElement('canvas');
   canvas.style.cssText =
     'position:fixed;top:0;left:0;z-index:0;pointer-events:none;';
@@ -13,22 +13,55 @@
   });
 
   const ctx = canvas.getContext('2d');
-  const DPR = Math.min(window.devicePixelRatio || 1, 2);
-  let W = 0, H = 0;
+  let W = 0, H = 0, DPR = 1;
 
+  /* ── quality tiers ───────────────────────────────────────────────────── */
+  /* Fewer rows / segments on small / high-DPR screens to stay at 60 fps. */
+  let N_ROWS, N_COLS, N_SEGS, C_ROWS;
+  const MAX_SEGS = 110;   /* buffer ceiling — never reallocated            */
+
+  function applyQuality(w) {
+    if (w < 480) {
+      N_ROWS = 28; N_COLS = 14; N_SEGS = 50;  C_ROWS = 12;
+    } else if (w < 768) {
+      N_ROWS = 38; N_COLS = 18; N_SEGS = 65;  C_ROWS = 18;
+    } else if (w < 1200) {
+      N_ROWS = 52; N_COLS = 22; N_SEGS = 85;  C_ROWS = 24;
+    } else {
+      N_ROWS = 68; N_COLS = 26; N_SEGS = 110; C_ROWS = 32;
+    }
+  }
+
+  /* ── resize (debounced, DPR-aware) ───────────────────────────────────── */
   function resize() {
-    W = window.innerWidth;
-    H = window.innerHeight;
-    canvas.width        = W * DPR;
-    canvas.height       = H * DPR;
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W   = window.innerWidth;
+    H   = window.innerHeight;
+    canvas.width        = Math.round(W * DPR);
+    canvas.height       = Math.round(H * DPR);
     canvas.style.width  = W + 'px';
     canvas.style.height = H + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    applyQuality(W);
   }
-  window.addEventListener('resize', resize);
-  resize();
 
-  /* ── zone geometry ──────────────────────────────────────────────────── */
+  let resizeTimer = null;
+  function scheduleResize(delay) {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resize, delay || 150);
+  }
+
+  window.addEventListener('resize',            function () { scheduleResize(150); });
+  window.addEventListener('orientationchange', function () { scheduleResize(400); });
+
+  resize(); /* initial */
+
+  /* ── prefers-reduced-motion ──────────────────────────────────────────── */
+  const motionMQL  = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let   slowMotion = motionMQL.matches;
+  motionMQL.addEventListener('change', function (e) { slowMotion = e.matches; });
+
+  /* ── zone geometry ───────────────────────────────────────────────────── */
   const CLEAR = 0.26;
   const OVER  = 0.04;
   const MIN_W = 0.55;
@@ -39,7 +72,7 @@
   function baseY (d, top) { return horizY(top) + (nearY(top) - horizY(top)) * d; }
   function hw    (d)      { return (W * 0.5) * (MIN_W + d * (MAX_W - MIN_W)); }
 
-  /* ── wave displacement ──────────────────────────────────────────────── */
+  /* ── wave displacement ───────────────────────────────────────────────── */
   function disp(wx, d, t) {
     const x = wx * 4.6, z = d * 23.0;
     return (
@@ -53,24 +86,22 @@
     );
   }
 
-  /* ── config ─────────────────────────────────────────────────────────── */
-  const N_ROWS = 68;
-  const N_COLS = 26;
-  const N_SEGS = 110;
-  const POWER  = 1.80;
-  const AMP    = 1.00;
+  /* ── shared config ───────────────────────────────────────────────────── */
+  const POWER    = 1.80;
+  const AMP      = 1.00;
+  const C_PHASE  = 0.72;
+  const C_SPEED  = 1.18;
 
   function ampScale(d) { return 0.42 + 0.58 * Math.pow(d, 0.55); }
 
-  /* Monochrome colour */
   function grey(d, extra, a) {
     const l = Math.min(97, 6 + d * 76 + extra * 12);
     return 'hsla(0,0%,' + (l | 0) + '%,' + a.toFixed(3) + ')';
   }
 
-  /* Shared point buffers */
-  const rowXs = new Float32Array(N_SEGS + 1);
-  const rowYs = new Float32Array(N_SEGS + 1);
+  /* Fixed-size point buffers — sized to MAX_SEGS, loops use current N_SEGS */
+  const rowXs = new Float32Array(MAX_SEGS + 1);
+  const rowYs = new Float32Array(MAX_SEGS + 1);
 
   function strokeBuf(lw, col) {
     ctx.beginPath();
@@ -82,14 +113,14 @@
     ctx.stroke();
   }
 
-  /* ── monochrome wave layer ──────────────────────────────────────────── */
+  /* ── monochrome wave layer ───────────────────────────────────────────── */
   function drawZone(t, top) {
-    const hY   = horizY(top);
-    const span = nearY(top) - hY;
+    const span = nearY(top) - horizY(top);
     const absS = Math.abs(span);
 
     ctx.globalCompositeOperation = 'screen';
 
+    /* cross / depth lines */
     for (let c = 0; c <= N_COLS; c++) {
       const wx = (c / N_COLS) * 2 - 1;
       ctx.beginPath();
@@ -104,6 +135,7 @@
       ctx.stroke();
     }
 
+    /* horizontal rows — far first */
     for (let r = 0; r < N_ROWS; r++) {
       const d      = Math.pow(r / (N_ROWS - 1), POWER);
       const lineHW = hw(d);
@@ -119,51 +151,30 @@
     }
   }
 
-  /* ── crystal-diffraction colour layer ──────────────────────────────────
-     A second wave surface phase-shifted from the white layer.  Each row
-     gets a per-point horizontal gradient cycling through the acid palette
-     (green 120° → yellow 60° → orange 30° → red 0°) plus the full warm
-     spectrum as time rotates the prism.  Screen blend makes colours glow
-     through the white lines like light through a diamond facet.           */
-
-  const C_ROWS  = 32;    /* fewer rows — we want vivid highlights, not a mesh */
-  const C_PHASE = 0.72;  /* wave phase offset (seconds-equivalent) vs white   */
-  const C_SPEED = 1.18;  /* colour layer moves slightly faster                */
-
-  /* Acid-spectrum hue: anchored to warm range, drifts with time+position   */
+  /* ── crystal-diffraction colour layer ───────────────────────────────── */
   function prismHue(pos, dv, d, t) {
-    /* base sweeps 0–150° (red→green) driven by x-position + slow time rot  */
-    const base = pos * 140 + t * 22;
-    /* displacement shifts hue so peaks ≠ troughs in colour                 */
-    const disp_shift = dv * 55;
-    /* depth offsets so each depth band shows a different colour family      */
-    const depth_shift = d * 80;
-    return ((base + disp_shift + depth_shift) % 360 + 360) % 360;
+    return ((pos * 140 + t * 22 + dv * 55 + d * 80) % 360 + 360) % 360;
   }
 
   function drawColourLayer(t, top) {
     const tc   = t * C_SPEED + C_PHASE;
-    const hY   = horizY(top);
-    const span = nearY(top) - hY;
+    const span = nearY(top) - horizY(top);
     const absS = Math.abs(span);
 
     ctx.globalCompositeOperation = 'screen';
 
     for (let r = 0; r < C_ROWS; r++) {
-      /* Interleave rows between the white layer for maximum coverage        */
       const d      = Math.pow((r + 0.5) / C_ROWS, POWER);
-      const lineHW = hw(d) * 0.995;   /* fraction different → visible depth  */
+      const lineHW = hw(d) * 0.995;
       const by     = baseY(d, top);
       const as_amp = absS * AMP * ampScale(d);
 
-      /* Build screen points using the colour-layer's own time              */
       for (let s = 0; s <= N_SEGS; s++) {
         const wx = (s / N_SEGS) * 2 - 1;
         rowXs[s] = W * 0.5 + wx * lineHW;
         rowYs[s] = by + disp(wx, d, tc) * as_amp;
       }
 
-      /* Per-row horizontal gradient: sample hue at N colour stops          */
       const x0 = rowXs[0], x1 = rowXs[N_SEGS];
       const coreGrad = ctx.createLinearGradient(x0, 0, x1, 0);
       const glowGrad = ctx.createLinearGradient(x0, 0, x1, 0);
@@ -171,42 +182,36 @@
 
       for (let g = 0; g <= N_STOPS; g++) {
         const pos  = g / N_STOPS;
-        const si   = Math.round(pos * N_SEGS);
         const wx   = pos * 2 - 1;
         const dv   = disp(wx, d, tc);
         const h    = prismHue(pos, dv, d, t);
-        const sat  = 95;
         const lum  = 52 + Math.abs(dv) * 12;
-        /* Core — vivid, semi-transparent; brightest near camera            */
         const coreA = (0.38 + d * 0.42) * (0.55 + Math.abs(dv) * 0.45);
-        /* Glow — wider, softer bloom around the colour line                */
         const glowA = (0.14 + d * 0.22) * (0.45 + Math.abs(dv) * 0.35);
         coreGrad.addColorStop(pos,
-          'hsla(' + (h | 0) + ',' + sat + '%,' + (lum | 0) + '%,' + coreA.toFixed(3) + ')');
+          'hsla(' + (h | 0) + ',95%,' + (lum | 0) + '%,' + coreA.toFixed(3) + ')');
         glowGrad.addColorStop(pos,
-          'hsla(' + (h | 0) + ',' + sat + '%,' + (lum + 15 | 0) + '%,' + glowA.toFixed(3) + ')');
+          'hsla(' + (h | 0) + ',95%,' + ((lum + 15) | 0) + '%,' + glowA.toFixed(3) + ')');
       }
 
-      /* Soft colour bloom */
-      strokeBuf(9  * d + 1.2, glowGrad);
-      /* Vivid colour core */
+      strokeBuf(9   * d + 1.2, glowGrad);
       strokeBuf(1.6 * d + 0.3, coreGrad);
     }
   }
 
-  /* ── render loop ────────────────────────────────────────────────────── */
+  /* ── render loop ─────────────────────────────────────────────────────── */
+  const BASE_SPEED = 0.00025;
+  const SLOW_SPEED = 0.00004;   /* prefers-reduced-motion: near-static      */
+
   function frame(ms) {
-    const t = ms * 0.00025;
+    const t = ms * (slowMotion ? SLOW_SPEED : BASE_SPEED);
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = 'rgba(15,15,15,0.20)';
     ctx.fillRect(0, 0, W, H);
 
-    /* White base layer */
     drawZone(t, true);
     drawZone(t, false);
-
-    /* Colour diffraction layer on top */
     drawColourLayer(t, true);
     drawColourLayer(t, false);
 

@@ -1,32 +1,48 @@
-{
+*, *::before, *::after {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
+html {
+    height: 100%;
+}
+
 body {
-    height: 100vh;
+    min-height: 100vh;
+    min-height: 100dvh;           /* dynamic viewport — hides mobile browser chrome */
     display: flex;
     justify-content: center;
     align-items: center;
-    background-color: rgba(15, 15, 15, 1); /* #0f0f0fff */
+    background-color: #0f0f0f;
+    overflow: hidden;
+    /* Safe-area insets for notched devices */
+    padding:
+        env(safe-area-inset-top)
+        env(safe-area-inset-right)
+        env(safe-area-inset-bottom)
+        env(safe-area-inset-left);
 }
 
 .container {
     text-align: center;
+    position: relative;
+    z-index: 1;
 }
 
 .logo {
-    max-width: 50%;
+    /* Natural display size = half of the @2x pixel width (306 px).
+       On 2× screens this maps to exactly 612 physical pixels — crisp.
+       max-width caps the logo on narrow viewports.                    */
+    width: 306px;
+    max-width: 72%;
     height: auto;
+    display: block;
+    margin: 0 auto;
 }
 
-/* Retina support */
-@media only screen and (-webkit-min-device-pixel-ratio: 2), 
-       only screen and (min-resolution: 144dpi) {
+@media (max-width: 480px) {
     .logo {
-        content: url('logo@2x.png'); /* Use high-resolution image */
-        width: 0.25; /* Maintain aspect ratio */
-        height: 0.25; /* Maintain aspect ratio */
+        max-width: 82%;
     }
 }
