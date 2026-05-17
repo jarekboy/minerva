@@ -75,7 +75,11 @@
   const N_COLS = 26;    /* converging cross-lines per zone                  */
   const N_SEGS = 110;   /* segments per horizontal line                     */
   const POWER  = 1.80;  /* depth distribution: packs lines near horizon     */
-  const AMP    = 0.72;  /* wave amplitude as fraction of zone span          */
+  const AMP    = 1.00;  /* wave amplitude as fraction of zone span          */
+
+  /* Amplitude scale: floor of 0.42 at horizon so the back never goes flat.
+     Grows to 1.0 at the near edge via a gentle curve.                      */
+  function ampScale(d) { return 0.42 + 0.58 * Math.pow(d, 0.55); }
 
   /* Monochrome colour: dim at horizon, bright near camera */
   function grey(d, extra, a) {
@@ -113,11 +117,11 @@
       for (let r = 0; r < N_ROWS; r++) {
         const d  = Math.pow(r / (N_ROWS - 1), POWER);
         const x  = W * 0.5 + wx * hw(d);
-        const y  = baseY(d, top) + disp(wx, d, t) * absS * AMP * d;
+        const y  = baseY(d, top) + disp(wx, d, t) * absS * AMP * ampScale(d);
         r === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
-      ctx.lineWidth   = 0.42;
-      ctx.strokeStyle = grey(0.40, 0, 0.24);
+      ctx.lineWidth   = 0.40;
+      ctx.strokeStyle = grey(0.40, 0, 0.18);
       ctx.stroke();
     }
 
@@ -130,15 +134,15 @@
       for (let s = 0; s <= N_SEGS; s++) {
         const wx  = (s / N_SEGS) * 2 - 1;
         rowXs[s]  = W * 0.5 + wx * lineHW;
-        rowYs[s]  = by + disp(wx, d, t) * absS * AMP * d;
+        rowYs[s]  = by + disp(wx, d, t) * absS * AMP * ampScale(d);
       }
 
       /* Outer bloom */
-      strokeBuf(10 * d + 0.5,  grey(d, 0,                          0.038));
+      strokeBuf(10 * d + 0.5,   grey(d, 0,                         0.028));
       /* Mid halo */
-      strokeBuf(3.8 * d + 0.3, grey(d, 0,                          0.095));
+      strokeBuf(3.8 * d + 0.3,  grey(d, 0,                         0.072));
       /* Sharp bright core */
-      strokeBuf(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)),   0.93));
+      strokeBuf(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)),   0.78));
     }
   }
 
@@ -147,7 +151,7 @@
     const t = ms * 0.00025;
 
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = 'rgba(15,15,15,0.30)';
+    ctx.fillStyle = 'rgba(15,15,15,0.20)';
     ctx.fillRect(0, 0, W, H);
 
     drawZone(t, true);    /* top zone  — above logo */
