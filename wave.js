@@ -7,6 +7,9 @@
   const SHOW_TOP = _wParam !== 'bottom';
   const SHOW_BOT = _wParam !== 'top';
 
+  /* ── forced quality tier — ?tier=lo | md | hi (default: auto) ───── */
+  const _tierParam = new URLSearchParams(location.search).get('tier');
+
   /* ── canvas ──────────────────────────────────────────────────────── */
   const canvas = document.createElement('canvas');
   canvas.style.cssText =
@@ -33,14 +36,15 @@
   let N_ROWS, N_COLS, N_SEGS, C_ROWS, FPS_TARGET;
 
   function applyTier(w) {
-    if (w < 768) {
-      tier = 'lo';
+    const forced = _tierParam === 'lo' || _tierParam === 'md' || _tierParam === 'hi'
+      ? _tierParam : null;
+    const t = forced || (w < 768 ? 'lo' : w < 1024 ? 'md' : 'hi');
+    tier = t;
+    if (t === 'lo') {
       N_ROWS = 22; N_COLS = 10; N_SEGS = 38; C_ROWS = 0;  FPS_TARGET = 30;
-    } else if (w < 1024) {
-      tier = 'md';
+    } else if (t === 'md') {
       N_ROWS = 52; N_COLS = 20; N_SEGS = 80; C_ROWS = 20; FPS_TARGET = 60;
     } else {
-      tier = 'hi';
       N_ROWS = 68; N_COLS = 26; N_SEGS = 110; C_ROWS = 32; FPS_TARGET = 60;
     }
   }
