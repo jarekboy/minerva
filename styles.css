@@ -50,7 +50,7 @@ body {
 .tagline {
     margin-top: 18px;
     color: rgba(255, 255, 255, 0.75);
-    font-size: 11px;
+    font-size: 7px;
     font-family: 'Montserrat', sans-serif;
     font-weight: 300;
     letter-spacing: 0.06em;
@@ -59,7 +59,7 @@ body {
 
 @media (max-width: 480px) {
     .tagline {
-        font-size: 9px;
+        font-size: 7px;
         white-space: normal;
         text-align: center;
     }
