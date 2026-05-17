@@ -49,11 +49,11 @@ body {
 
 .tagline {
     margin-top: 18px;
-    color: rgba(255, 255, 255, 0.45);
+    color: rgba(255, 255, 255, 0.75);
     font-size: 11px;
-    font-family: inherit;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 300;
+    letter-spacing: 0.06em;
     white-space: nowrap;
 }
 
