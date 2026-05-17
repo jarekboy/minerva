@@ -1,4 +1,4 @@
-/* Minerva — monochrome 3-D flat-surface double wave, retina-ready */
+/* Minerva — monochrome 3-D wave + crystal-diffraction colour layer */
 (function () {
   'use strict';
 
@@ -28,37 +28,20 @@
   window.addEventListener('resize', resize);
   resize();
 
-  /* ── zone geometry ──────────────────────────────────────────────────────
-     The vanishing horizon lives near the logo-clear zone.
-     The camera / near end is at (or just beyond) the screen edge.
+  /* ── zone geometry ──────────────────────────────────────────────────── */
+  const CLEAR = 0.26;
+  const OVER  = 0.04;
+  const MIN_W = 0.55;
+  const MAX_W = 1.22;
 
-     d = 0  →  horizon  (just above / below logo,  narrow-ish, small amp)
-     d = 1  →  camera   (at screen edge,  wide, large amp)
+  function horizY(top) { return top ?  H * (0.5 - CLEAR) : H * (0.5 + CLEAR); }
+  function nearY (top) { return top ? -H * OVER           : H * (1 + OVER);    }
+  function baseY (d, top) { return horizY(top) + (nearY(top) - horizY(top)) * d; }
+  function hw    (d)      { return (W * 0.5) * (MIN_W + d * (MAX_W - MIN_W)); }
 
-     Lines do NOT converge to a point: they span MIN_W→MAX_W × half-screen
-     at each depth.  This keeps the surface looking flat and expansive
-     instead of funnelling into a black hole.                               */
-
-  const CLEAR  = 0.26;   /* logo clearance: half-height fraction of H      */
-  const OVER   = 0.04;   /* how far "near" overshoots the screen edge       */
-  const MIN_W  = 0.55;   /* horizon line half-width as fraction of W/2      */
-  const MAX_W  = 1.22;   /* near-camera half-width (clips at screen edges)  */
-
-  function horizY(top) { return top ?  H * (0.5 - CLEAR)  : H * (0.5 + CLEAR);  }
-  function nearY (top) { return top ? -H * OVER            : H * (1 + OVER);     }
-
-  /* Screen Y for row at depth d */
-  function baseY(d, top) { return horizY(top) + (nearY(top) - horizY(top)) * d; }
-
-  /* Half-width of a row in screen pixels at depth d */
-  function hw(d) { return (W * 0.5) * (MIN_W + d * (MAX_W - MIN_W)); }
-
-  /* ── wave displacement ──────────────────────────────────────────────────
-     Seven incommensurable frequencies prevent repeating patterns and give
-     the complex, organic variance visible in the reference.               */
+  /* ── wave displacement ──────────────────────────────────────────────── */
   function disp(wx, d, t) {
-    const x = wx * 4.6;
-    const z = d  * 23.0;
+    const x = wx * 4.6, z = d * 23.0;
     return (
       Math.sin(x * 1.94 + t * 0.94 + z * 0.058) * 0.30 +
       Math.sin(x * 0.67 - t * 0.71 + z * 0.145) * 0.23 +
@@ -71,27 +54,24 @@
   }
 
   /* ── config ─────────────────────────────────────────────────────────── */
-  const N_ROWS = 68;    /* horizontal wave lines per zone                   */
-  const N_COLS = 26;    /* converging cross-lines per zone                  */
-  const N_SEGS = 110;   /* segments per horizontal line                     */
-  const POWER  = 1.80;  /* depth distribution: packs lines near horizon     */
-  const AMP    = 1.00;  /* wave amplitude as fraction of zone span          */
+  const N_ROWS = 68;
+  const N_COLS = 26;
+  const N_SEGS = 110;
+  const POWER  = 1.80;
+  const AMP    = 1.00;
 
-  /* Amplitude scale: floor of 0.42 at horizon so the back never goes flat.
-     Grows to 1.0 at the near edge via a gentle curve.                      */
   function ampScale(d) { return 0.42 + 0.58 * Math.pow(d, 0.55); }
 
-  /* Monochrome colour: dim at horizon, bright near camera */
+  /* Monochrome colour */
   function grey(d, extra, a) {
     const l = Math.min(97, 6 + d * 76 + extra * 12);
     return 'hsla(0,0%,' + (l | 0) + '%,' + a.toFixed(3) + ')';
   }
 
-  /* Pre-allocated point buffers (no per-frame GC pressure) */
+  /* Shared point buffers */
   const rowXs = new Float32Array(N_SEGS + 1);
   const rowYs = new Float32Array(N_SEGS + 1);
 
-  /* Stroke the contents of rowXs / rowYs */
   function strokeBuf(lw, col) {
     ctx.beginPath();
     for (let s = 0; s <= N_SEGS; s++) {
@@ -102,22 +82,21 @@
     ctx.stroke();
   }
 
-  /* ── draw one zone ──────────────────────────────────────────────────── */
+  /* ── monochrome wave layer ──────────────────────────────────────────── */
   function drawZone(t, top) {
     const hY   = horizY(top);
-    const span = nearY(top) - hY;    /* signed: negative for top zone     */
+    const span = nearY(top) - hY;
     const absS = Math.abs(span);
 
     ctx.globalCompositeOperation = 'screen';
 
-    /* 1 — Cross / depth lines (drawn first; horizontal rows paint over) */
     for (let c = 0; c <= N_COLS; c++) {
       const wx = (c / N_COLS) * 2 - 1;
       ctx.beginPath();
       for (let r = 0; r < N_ROWS; r++) {
-        const d  = Math.pow(r / (N_ROWS - 1), POWER);
-        const x  = W * 0.5 + wx * hw(d);
-        const y  = baseY(d, top) + disp(wx, d, t) * absS * AMP * ampScale(d);
+        const d = Math.pow(r / (N_ROWS - 1), POWER);
+        const x = W * 0.5 + wx * hw(d);
+        const y = baseY(d, top) + disp(wx, d, t) * absS * AMP * ampScale(d);
         r === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
       ctx.lineWidth   = 0.40;
@@ -125,24 +104,93 @@
       ctx.stroke();
     }
 
-    /* 2 — Horizontal wave rows: far (d≈0) first so near rows sit on top */
     for (let r = 0; r < N_ROWS; r++) {
-      const d     = Math.pow(r / (N_ROWS - 1), POWER);
+      const d      = Math.pow(r / (N_ROWS - 1), POWER);
       const lineHW = hw(d);
-      const by    = baseY(d, top);
-
+      const by     = baseY(d, top);
       for (let s = 0; s <= N_SEGS; s++) {
-        const wx  = (s / N_SEGS) * 2 - 1;
-        rowXs[s]  = W * 0.5 + wx * lineHW;
-        rowYs[s]  = by + disp(wx, d, t) * absS * AMP * ampScale(d);
+        const wx = (s / N_SEGS) * 2 - 1;
+        rowXs[s] = W * 0.5 + wx * lineHW;
+        rowYs[s] = by + disp(wx, d, t) * absS * AMP * ampScale(d);
+      }
+      strokeBuf(10  * d + 0.5,  grey(d, 0,                       0.028));
+      strokeBuf(3.8 * d + 0.3,  grey(d, 0,                       0.072));
+      strokeBuf(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)), 0.78));
+    }
+  }
+
+  /* ── crystal-diffraction colour layer ──────────────────────────────────
+     A second wave surface phase-shifted from the white layer.  Each row
+     gets a per-point horizontal gradient cycling through the acid palette
+     (green 120° → yellow 60° → orange 30° → red 0°) plus the full warm
+     spectrum as time rotates the prism.  Screen blend makes colours glow
+     through the white lines like light through a diamond facet.           */
+
+  const C_ROWS  = 32;    /* fewer rows — we want vivid highlights, not a mesh */
+  const C_PHASE = 0.72;  /* wave phase offset (seconds-equivalent) vs white   */
+  const C_SPEED = 1.18;  /* colour layer moves slightly faster                */
+
+  /* Acid-spectrum hue: anchored to warm range, drifts with time+position   */
+  function prismHue(pos, dv, d, t) {
+    /* base sweeps 0–150° (red→green) driven by x-position + slow time rot  */
+    const base = pos * 140 + t * 22;
+    /* displacement shifts hue so peaks ≠ troughs in colour                 */
+    const disp_shift = dv * 55;
+    /* depth offsets so each depth band shows a different colour family      */
+    const depth_shift = d * 80;
+    return ((base + disp_shift + depth_shift) % 360 + 360) % 360;
+  }
+
+  function drawColourLayer(t, top) {
+    const tc   = t * C_SPEED + C_PHASE;
+    const hY   = horizY(top);
+    const span = nearY(top) - hY;
+    const absS = Math.abs(span);
+
+    ctx.globalCompositeOperation = 'screen';
+
+    for (let r = 0; r < C_ROWS; r++) {
+      /* Interleave rows between the white layer for maximum coverage        */
+      const d      = Math.pow((r + 0.5) / C_ROWS, POWER);
+      const lineHW = hw(d) * 0.995;   /* fraction different → visible depth  */
+      const by     = baseY(d, top);
+      const as_amp = absS * AMP * ampScale(d);
+
+      /* Build screen points using the colour-layer's own time              */
+      for (let s = 0; s <= N_SEGS; s++) {
+        const wx = (s / N_SEGS) * 2 - 1;
+        rowXs[s] = W * 0.5 + wx * lineHW;
+        rowYs[s] = by + disp(wx, d, tc) * as_amp;
       }
 
-      /* Outer bloom */
-      strokeBuf(10 * d + 0.5,   grey(d, 0,                         0.028));
-      /* Mid halo */
-      strokeBuf(3.8 * d + 0.3,  grey(d, 0,                         0.072));
-      /* Sharp bright core */
-      strokeBuf(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)),   0.78));
+      /* Per-row horizontal gradient: sample hue at N colour stops          */
+      const x0 = rowXs[0], x1 = rowXs[N_SEGS];
+      const coreGrad = ctx.createLinearGradient(x0, 0, x1, 0);
+      const glowGrad = ctx.createLinearGradient(x0, 0, x1, 0);
+      const N_STOPS  = 14;
+
+      for (let g = 0; g <= N_STOPS; g++) {
+        const pos  = g / N_STOPS;
+        const si   = Math.round(pos * N_SEGS);
+        const wx   = pos * 2 - 1;
+        const dv   = disp(wx, d, tc);
+        const h    = prismHue(pos, dv, d, t);
+        const sat  = 95;
+        const lum  = 52 + Math.abs(dv) * 12;
+        /* Core — vivid, semi-transparent; brightest near camera            */
+        const coreA = (0.38 + d * 0.42) * (0.55 + Math.abs(dv) * 0.45);
+        /* Glow — wider, softer bloom around the colour line                */
+        const glowA = (0.14 + d * 0.22) * (0.45 + Math.abs(dv) * 0.35);
+        coreGrad.addColorStop(pos,
+          'hsla(' + (h | 0) + ',' + sat + '%,' + (lum | 0) + '%,' + coreA.toFixed(3) + ')');
+        glowGrad.addColorStop(pos,
+          'hsla(' + (h | 0) + ',' + sat + '%,' + (lum + 15 | 0) + '%,' + glowA.toFixed(3) + ')');
+      }
+
+      /* Soft colour bloom */
+      strokeBuf(9  * d + 1.2, glowGrad);
+      /* Vivid colour core */
+      strokeBuf(1.6 * d + 0.3, coreGrad);
     }
   }
 
@@ -154,8 +202,13 @@
     ctx.fillStyle = 'rgba(15,15,15,0.20)';
     ctx.fillRect(0, 0, W, H);
 
-    drawZone(t, true);    /* top zone  — above logo */
-    drawZone(t, false);   /* bottom zone — below logo */
+    /* White base layer */
+    drawZone(t, true);
+    drawZone(t, false);
+
+    /* Colour diffraction layer on top */
+    drawColourLayer(t, true);
+    drawColourLayer(t, false);
 
     requestAnimationFrame(frame);
   }
