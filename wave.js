@@ -36,9 +36,9 @@
     if (w < 768) {
       tier = 'lo';
       N_ROWS = 22; N_COLS = 10; N_SEGS = 38; C_ROWS = 0;  FPS_TARGET = 30;
-    } else if (w < 1200) {
+    } else if (w < 1024) {
       tier = 'md';
-      N_ROWS = 42; N_COLS = 18; N_SEGS = 68; C_ROWS = 14; FPS_TARGET = 60;
+      N_ROWS = 52; N_COLS = 20; N_SEGS = 80; C_ROWS = 20; FPS_TARGET = 60;
     } else {
       tier = 'hi';
       N_ROWS = 68; N_COLS = 26; N_SEGS = 110; C_ROWS = 32; FPS_TARGET = 60;
