@@ -1,18 +1,15 @@
-/* Minerva — monochrome 3-D double digital wave, retina-ready */
+/* Minerva — monochrome 3-D flat-surface double wave, retina-ready */
 (function () {
   'use strict';
 
-  /* ── canvas ───────────────────────────────────────────────────── */
+  /* ── canvas ─────────────────────────────────────────────────────────── */
   const canvas = document.createElement('canvas');
   canvas.style.cssText =
     'position:fixed;top:0;left:0;z-index:0;pointer-events:none;';
   document.body.prepend(canvas);
 
   Array.from(document.body.children).forEach(function (el) {
-    if (el !== canvas) {
-      el.style.position = 'relative';
-      el.style.zIndex   = '1';
-    }
+    if (el !== canvas) { el.style.position = 'relative'; el.style.zIndex = '1'; }
   });
 
   const ctx = canvas.getContext('2d');
@@ -31,112 +28,121 @@
   window.addEventListener('resize', resize);
   resize();
 
-  /* ── zone geometry ────────────────────────────────────────────── */
-  /* Logo sits at y = H/2.  Each wave zone has:
-       horizon  — vanishing point pushed just outside the screen edge
-       near     — inner boundary, kept well clear of the logo
-     Lines converge to horizon (d=0) and spread full-width at near (d=1). */
+  /* ── zone geometry ──────────────────────────────────────────────────────
+     The vanishing horizon lives near the logo-clear zone.
+     The camera / near end is at (or just beyond) the screen edge.
 
-  const CLEAR = 0.28;   /* half-size of logo-free gap (fraction of H)   */
-  const PUSH  = 0.05;   /* horizon overshoot past screen edge            */
+     d = 0  →  horizon  (just above / below logo,  narrow-ish, small amp)
+     d = 1  →  camera   (at screen edge,  wide, large amp)
 
-  function horizY(top) { return top ? -H * PUSH      : H * (1 + PUSH); }
-  function nearY(top)  { return top ?  H * (0.5 - CLEAR) : H * (0.5 + CLEAR); }
-  /* span = nearY - horizY:  positive for top zone, negative for bottom
-     screen y at depth d:  horizY + span * d  (d=0 → horizon, d=1 → near) */
+     Lines do NOT converge to a point: they span MIN_W→MAX_W × half-screen
+     at each depth.  This keeps the surface looking flat and expansive
+     instead of funnelling into a black hole.                               */
 
-  /* ── wave displacement ────────────────────────────────────────── */
-  /* Returns ≈ [-1, 1].  Seven incommensurable frequencies prevent
-     obvious tiling and create organic variance across the surface.  */
+  const CLEAR  = 0.26;   /* logo clearance: half-height fraction of H      */
+  const OVER   = 0.04;   /* how far "near" overshoots the screen edge       */
+  const MIN_W  = 0.55;   /* horizon line half-width as fraction of W/2      */
+  const MAX_W  = 1.22;   /* near-camera half-width (clips at screen edges)  */
+
+  function horizY(top) { return top ?  H * (0.5 - CLEAR)  : H * (0.5 + CLEAR);  }
+  function nearY (top) { return top ? -H * OVER            : H * (1 + OVER);     }
+
+  /* Screen Y for row at depth d */
+  function baseY(d, top) { return horizY(top) + (nearY(top) - horizY(top)) * d; }
+
+  /* Half-width of a row in screen pixels at depth d */
+  function hw(d) { return (W * 0.5) * (MIN_W + d * (MAX_W - MIN_W)); }
+
+  /* ── wave displacement ──────────────────────────────────────────────────
+     Seven incommensurable frequencies prevent repeating patterns and give
+     the complex, organic variance visible in the reference.               */
   function disp(wx, d, t) {
     const x = wx * 4.6;
-    const z = d  * 24.0;          /* remap inverse-depth to a z-like scale */
+    const z = d  * 23.0;
     return (
-      Math.sin(x * 1.93  + t * 0.94 + z * 0.057) * 0.30 +
-      Math.sin(x * 0.67  - t * 0.72 + z * 0.143) * 0.23 +
-      Math.sin(x * 4.97  + z * 0.19 + t * 1.66)  * 0.19 +
-      Math.sin(x * 1.35  + z * 0.07 - t * 0.53)  * 0.14 +
-      Math.sin(x * 8.05  + z * 0.03 - t * 2.13)  * 0.07 +
-      Math.sin(x * 0.34  + z * 0.31 + t * 0.27)  * 0.05 +
-      Math.cos(x * 3.02  - z * 0.12 - t * 1.08)  * 0.02
+      Math.sin(x * 1.94 + t * 0.94 + z * 0.058) * 0.30 +
+      Math.sin(x * 0.67 - t * 0.71 + z * 0.145) * 0.23 +
+      Math.sin(x * 4.98 + z * 0.19 + t * 1.67)  * 0.19 +
+      Math.sin(x * 1.35 + z * 0.07 - t * 0.53)  * 0.14 +
+      Math.sin(x * 8.07 + z * 0.03 - t * 2.14)  * 0.07 +
+      Math.sin(x * 0.34 + z * 0.31 + t * 0.27)  * 0.05 +
+      Math.cos(x * 3.02 - z * 0.12 - t * 1.08)  * 0.02
     );
   }
 
-  /* ── config ───────────────────────────────────────────────────── */
-  const N_ROWS = 68;     /* horizontal lines per zone                  */
-  const N_COLS = 26;     /* converging depth lines per zone            */
-  const N_SEGS = 100;    /* segments per horizontal line               */
-  /* Power > 1 packs more lines near the horizon (perspective realism) */
-  const POWER  = 1.80;
+  /* ── config ─────────────────────────────────────────────────────────── */
+  const N_ROWS = 68;    /* horizontal wave lines per zone                   */
+  const N_COLS = 26;    /* converging cross-lines per zone                  */
+  const N_SEGS = 110;   /* segments per horizontal line                     */
+  const POWER  = 1.80;  /* depth distribution: packs lines near horizon     */
+  const AMP    = 0.72;  /* wave amplitude as fraction of zone span          */
 
-  /* Monochrome colour — brightness rises from horizon (dim) to near (bright) */
-  function grey(d, boost, a) {
-    const l = Math.min(97, 6 + d * 78 + boost * 11);
+  /* Monochrome colour: dim at horizon, bright near camera */
+  function grey(d, extra, a) {
+    const l = Math.min(97, 6 + d * 76 + extra * 12);
     return 'hsla(0,0%,' + (l | 0) + '%,' + a.toFixed(3) + ')';
   }
 
-  /* Reusable point buffers (avoid per-frame allocation) */
+  /* Pre-allocated point buffers (no per-frame GC pressure) */
   const rowXs = new Float32Array(N_SEGS + 1);
   const rowYs = new Float32Array(N_SEGS + 1);
 
-  /* ── draw one zone ────────────────────────────────────────────── */
+  /* Stroke the contents of rowXs / rowYs */
+  function strokeBuf(lw, col) {
+    ctx.beginPath();
+    for (let s = 0; s <= N_SEGS; s++) {
+      s === 0 ? ctx.moveTo(rowXs[s], rowYs[s]) : ctx.lineTo(rowXs[s], rowYs[s]);
+    }
+    ctx.lineWidth   = lw;
+    ctx.strokeStyle = col;
+    ctx.stroke();
+  }
+
+  /* ── draw one zone ──────────────────────────────────────────────────── */
   function drawZone(t, top) {
     const hY   = horizY(top);
-    const span = nearY(top) - hY;   /* signed span to near edge        */
+    const span = nearY(top) - hY;    /* signed: negative for top zone     */
     const absS = Math.abs(span);
 
     ctx.globalCompositeOperation = 'screen';
 
-    /* 1 — Depth / cross lines (painter: drawn before horizontal rows) */
+    /* 1 — Cross / depth lines (drawn first; horizontal rows paint over) */
     for (let c = 0; c <= N_COLS; c++) {
       const wx = (c / N_COLS) * 2 - 1;
       ctx.beginPath();
       for (let r = 0; r < N_ROWS; r++) {
         const d  = Math.pow(r / (N_ROWS - 1), POWER);
-        const dv = disp(wx, d, t);
-        const x  = W * 0.5 + wx * W * 0.5 * d;
-        const y  = hY + span * d + dv * absS * 0.38 * d;
+        const x  = W * 0.5 + wx * hw(d);
+        const y  = baseY(d, top) + disp(wx, d, t) * absS * AMP * d;
         r === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
-      ctx.lineWidth   = 0.4;
-      ctx.strokeStyle = grey(0.40, 0, 0.26);
+      ctx.lineWidth   = 0.42;
+      ctx.strokeStyle = grey(0.40, 0, 0.24);
       ctx.stroke();
     }
 
-    /* 2 — Horizontal wave rows — far first so near rows sit on top   */
+    /* 2 — Horizontal wave rows: far (d≈0) first so near rows sit on top */
     for (let r = 0; r < N_ROWS; r++) {
       const d     = Math.pow(r / (N_ROWS - 1), POWER);
-      const baseY = hY + span * d;
+      const lineHW = hw(d);
+      const by    = baseY(d, top);
 
-      /* Build screen-space points for this row */
       for (let s = 0; s <= N_SEGS; s++) {
         const wx  = (s / N_SEGS) * 2 - 1;
-        rowXs[s]  = W * 0.5 + wx * W * 0.5 * d;
-        rowYs[s]  = baseY + disp(wx, d, t) * absS * 0.42 * d;
+        rowXs[s]  = W * 0.5 + wx * lineHW;
+        rowYs[s]  = by + disp(wx, d, t) * absS * AMP * d;
       }
 
-      /* Helper: stroke the pre-built path */
-      function strokeRow(lw, col) {
-        ctx.beginPath();
-        for (let s = 0; s <= N_SEGS; s++) {
-          s === 0 ? ctx.moveTo(rowXs[s], rowYs[s])
-                  : ctx.lineTo(rowXs[s], rowYs[s]);
-        }
-        ctx.lineWidth   = lw;
-        ctx.strokeStyle = col;
-        ctx.stroke();
-      }
-
-      /* Outer glow */
-      strokeRow(10 * d + 0.5, grey(d, 0,   0.038));
-      /* Mid halo  */
-      strokeRow(3.8 * d + 0.3, grey(d, 0,   0.095));
-      /* Sharp core */
-      strokeRow(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)), 0.93));
+      /* Outer bloom */
+      strokeBuf(10 * d + 0.5,  grey(d, 0,                          0.038));
+      /* Mid halo */
+      strokeBuf(3.8 * d + 0.3, grey(d, 0,                          0.095));
+      /* Sharp bright core */
+      strokeBuf(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)),   0.93));
     }
   }
 
-  /* ── render loop ──────────────────────────────────────────────── */
+  /* ── render loop ────────────────────────────────────────────────────── */
   function frame(ms) {
     const t = ms * 0.00025;
 
