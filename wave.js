@@ -26,10 +26,10 @@
   /* ── quality tiers ───────────────────────────────────────────────── */
   /*
      lo  (< 768 px)   iPhone / small Android
-         - 30 fps cap, DPR ≤ 1.5, core stroke only, no colour layer
-     md  (768–1199 px) tablet / small laptop
+         - 30 fps cap, DPR ≤ 1.5, core stroke only, minimal colour layer
+     md  (768–1023 px) tablet / small laptop
          - 60 fps, DPR ≤ 2, bloom+core, reduced colour layer
-     hi  (≥ 1200 px)  desktop
+     hi  (≥ 1024 px)  desktop
          - 60 fps, DPR ≤ 2, full 3-pass, full colour layer
   */
   let tier = 'hi';
@@ -47,6 +47,7 @@
     } else {
       N_ROWS = 68; N_COLS = 26; N_SEGS = 110; C_ROWS = 32; FPS_TARGET = 60;
     }
+    _gradFrame = -9999; /* invalidate gradient cache on tier change */
   }
 
   /* ── resize (debounced) ──────────────────────────────────────────── */
@@ -60,6 +61,7 @@
     canvas.style.width  = W + 'px';
     canvas.style.height = H + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    _gradFrame = -9999; /* invalidate gradient cache on resize */
   }
 
   let resizeTimer = null;
@@ -120,15 +122,21 @@
   const rowXs = new Float32Array(111);
   const rowYs = new Float32Array(111);
 
-  function strokeBuf(lw, col) {
+  /* Build a path from the shared row buffers — call once, stroke N times */
+  function buildPath() {
     ctx.beginPath();
-    for (let s = 0; s <= N_SEGS; s++) {
-      s === 0 ? ctx.moveTo(rowXs[s], rowYs[s]) : ctx.lineTo(rowXs[s], rowYs[s]);
-    }
+    ctx.moveTo(rowXs[0], rowYs[0]);
+    for (let s = 1; s <= N_SEGS; s++) ctx.lineTo(rowXs[s], rowYs[s]);
+  }
+
+  function strokeOnly(lw, col) {
     ctx.lineWidth   = lw;
     ctx.strokeStyle = col;
     ctx.stroke();
   }
+
+  /* Legacy helper used for cross-lines (builds its own path inline) */
+  function strokeBuf(lw, col) { buildPath(); strokeOnly(lw, col); }
 
   /* ── monochrome zone ─────────────────────────────────────────────── */
   function drawZone(t, top) {
@@ -154,7 +162,7 @@
       }
     }
 
-    /* horizontal rows — far first; skip expensive bloom for dim far rows */
+    /* horizontal rows — far first; build path once, stroke up to 3× */
     for (let r = 0; r < N_ROWS; r++) {
       const d      = Math.pow(r / (N_ROWS - 1), POWER);
       const lineHW = hw(d);
@@ -172,30 +180,69 @@
         continue;
       }
 
-      /* md/hi: bloom only for rows that are bright enough to warrant it */
+      /* md/hi: build path once, stroke up to 3 passes              */
+      buildPath();
       if (d > 0.14) {
-        strokeBuf(10 * d + 0.5, grey(d, 0, 0.028));
+        strokeOnly(10 * d + 0.5, grey(d, 0, 0.028));          /* outer bloom */
       }
-      /* hi: mid halo */
       if (tier === 'hi' && d > 0.08) {
-        strokeBuf(3.8 * d + 0.3, grey(d, 0, 0.072));
+        strokeOnly(3.8 * d + 0.3, grey(d, 0, 0.072));         /* mid halo    */
       }
-      /* core — always */
-      strokeBuf(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)), 0.78));
+      strokeOnly(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)), 0.78)); /* core */
     }
   }
 
-  /* ── colour diffraction layer — md/hi only ───────────────────────── */
+  /* ── colour diffraction layer — gradient cache ───────────────────── */
   const C_PHASE = 0.72, C_SPEED = 1.18;
+  /*
+     Gradients depend only on x-position (constant between resizes) and
+     slowly-varying hue (imperceptibly stale over 3 frames).  We rebuild
+     the CanvasGradient objects every GRAD_REFRESH frames instead of every
+     frame, cutting gradient allocation and addColorStop calls by ~66%.
+     Both zones share the same cache (gradient colours are zone-agnostic).
+  */
+  const GRAD_REFRESH = 3;
+  let _grads     = null;
+  let _gradFrame = -9999;
+
+  function rebuildGrads(t) {
+    const N_STOPS = tier === 'hi' ? 14 : 7;
+    const tc = t * C_SPEED + C_PHASE;
+    if (!_grads || _grads.length !== C_ROWS) _grads = new Array(C_ROWS);
+    for (let r = 0; r < C_ROWS; r++) {
+      const d      = Math.pow((r + 0.5) / C_ROWS, POWER);
+      const lineHW = hw(d) * 0.995;
+      const x0     = W * 0.5 - lineHW;
+      const x1     = W * 0.5 + lineHW;
+      const core   = ctx.createLinearGradient(x0, 0, x1, 0);
+      const glow   = ctx.createLinearGradient(x0, 0, x1, 0);
+      for (let g = 0; g <= N_STOPS; g++) {
+        const pos = g / N_STOPS;
+        const wx  = pos * 2 - 1;
+        const dv  = disp(wx, d, tc);
+        const h   = prismHue(pos, dv, d, t);
+        const lum = 52 + Math.abs(dv) * 12;
+        const cA  = (0.38 + d * 0.42) * (0.55 + Math.abs(dv) * 0.45);
+        const gA  = (0.14 + d * 0.22) * (0.45 + Math.abs(dv) * 0.35);
+        core.addColorStop(pos,
+          'hsla(' + (h|0) + ',95%,' + (lum|0) + '%,' + cA.toFixed(3) + ')');
+        glow.addColorStop(pos,
+          'hsla(' + (h|0) + ',95%,' + ((lum+15)|0) + '%,' + gA.toFixed(3) + ')');
+      }
+      _grads[r] = { core: core, glow: glow };
+    }
+    _gradFrame = _frameCount;
+  }
 
   function drawColourLayer(t, top) {
     if (C_ROWS === 0) return;
 
+    /* Rebuild gradient cache if stale */
+    if (_frameCount - _gradFrame >= GRAD_REFRESH) rebuildGrads(t);
+
     const tc   = t * C_SPEED + C_PHASE;
     const span = nearY(top) - horizY(top);
     const absS = Math.abs(span);
-    /* md uses fewer gradient stops to cut createLinearGradient cost    */
-    const N_STOPS = tier === 'hi' ? 14 : 7;
 
     ctx.globalCompositeOperation = 'screen';
 
@@ -211,33 +258,19 @@
         rowYs[s] = by + disp(wx, d, tc) * as_amp;
       }
 
-      const x0 = rowXs[0], x1 = rowXs[N_SEGS];
-      const coreGrad = ctx.createLinearGradient(x0, 0, x1, 0);
-      const glowGrad = ctx.createLinearGradient(x0, 0, x1, 0);
-
-      for (let g = 0; g <= N_STOPS; g++) {
-        const pos  = g / N_STOPS;
-        const wx   = pos * 2 - 1;
-        const dv   = disp(wx, d, tc);
-        const h    = prismHue(pos, dv, d, t);
-        const lum  = 52 + Math.abs(dv) * 12;
-        const cA   = (0.38 + d * 0.42) * (0.55 + Math.abs(dv) * 0.45);
-        const gA   = (0.14 + d * 0.22) * (0.45 + Math.abs(dv) * 0.35);
-        coreGrad.addColorStop(pos,
-          'hsla(' + (h|0) + ',95%,' + (lum|0) + '%,' + cA.toFixed(3) + ')');
-        glowGrad.addColorStop(pos,
-          'hsla(' + (h|0) + ',95%,' + ((lum+15)|0) + '%,' + gA.toFixed(3) + ')');
-      }
-
-      strokeBuf(9   * d + 1.2, glowGrad);
-      strokeBuf(1.6 * d + 0.3, coreGrad);
+      /* Build path once, stroke glow + core */
+      const g = _grads[r];
+      buildPath();
+      strokeOnly(9   * d + 1.2, g.glow);
+      strokeOnly(1.6 * d + 0.3, g.core);
     }
   }
 
   /* ── render loop with fps cap ────────────────────────────────────── */
   const BASE_SPEED = 0.00025;
   const SLOW_SPEED = 0.00004;
-  let lastMs = 0;
+  let lastMs     = 0;
+  let _frameCount = 0;
 
   function frame(ms) {
     requestAnimationFrame(frame);
@@ -246,6 +279,7 @@
     const targetInterval = 1000 / FPS_TARGET;
     if (ms - lastMs < targetInterval - 1) return;
     lastMs = ms;
+    _frameCount++;
 
     const t = ms * (slowMotion ? SLOW_SPEED : BASE_SPEED);
 
