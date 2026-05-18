@@ -24,22 +24,35 @@
   let W = 0, H = 0, DPR = 1;
 
   /* ── quality tiers ───────────────────────────────────────────────── */
-  /*
-     lo  (< 768 px)   iPhone / small Android
-         - 30 fps cap, DPR ≤ 1.5, core stroke only, minimal colour layer
-     md  (768–1023 px) tablet / small laptop
-         - 60 fps, DPR ≤ 2, bloom+core, reduced colour layer
-     hi  (≥ 1024 px)  desktop
-         - 60 fps, DPR ≤ 2, full 3-pass, full colour layer
-  */
   let tier = 'hi';
   let N_ROWS, N_COLS, N_SEGS, C_ROWS, FPS_TARGET;
 
-  /* ── gradient cache state (declared early — referenced in applyTier/resize) */
+  /* ── gradient cache state ────────────────────────────────────────── */
   const GRAD_REFRESH = 3;
   let _grads      = null;
   let _gradFrame  = -9999;
   let _frameCount = 0;
+
+  /* ── per-row pre-computed tables (rebuilt on resize / tier change) ── */
+  /*
+     All values in these tables depend only on row index, N_ROWS, W, and
+     POWER — none of which change mid-animation.  Computing them once on
+     resize and reading them in the hot loop eliminates:
+       · Math.pow per segment for ampScale  (~1.5M calls/sec saved)
+       · Math.pow per row for d             (~240k calls/sec saved)
+       · horizY/nearY function calls        (hoisted to per-zone consts)
+       · separate disp(0,d,t) for core col  (captured mid-loop instead)
+       · string alloc for bloom/halo grey   (precomputed string literals)
+  */
+  let rowD      = null;   /* Float32: d = pow(r/(N_ROWS-1), POWER)      */
+  let rowHW     = null;   /* Float32: hw(d) — half-width per row         */
+  let rowAmpS   = null;   /* Float32: ampScale(d) per row                */
+  let rowBaseL  = null;   /* Int32:   (6 + d*76)|0 for grey() base lum   */
+  let rowBloom  = null;   /* string[]: grey(d,0,0.028) literal per row   */
+  let rowHalo   = null;   /* string[]: grey(d,0,0.072) literal per row   */
+  let colD      = null;   /* Float32: d for colour-layer rows             */
+  let colHW     = null;   /* Float32: hw(d)*0.995 for colour-layer rows  */
+  let colAmpS   = null;   /* Float32: ampScale(d) for colour-layer rows  */
 
   function applyTier(w) {
     const forced = _tierParam === 'lo' || _tierParam === 'md' || _tierParam === 'hi'
@@ -53,21 +66,53 @@
     } else {
       N_ROWS = 68; N_COLS = 26; N_SEGS = 110; C_ROWS = 32; FPS_TARGET = 60;
     }
-    _gradFrame = -9999; /* invalidate gradient cache on tier change */
+    _gradFrame = -9999;
   }
 
   /* ── resize (debounced) ──────────────────────────────────────────── */
+  function precompute() {
+    /* Horizontal row tables */
+    rowD     = new Float32Array(N_ROWS);
+    rowHW    = new Float32Array(N_ROWS);
+    rowAmpS  = new Float32Array(N_ROWS);
+    rowBaseL = new Int32Array(N_ROWS);
+    rowBloom = [];
+    rowHalo  = [];
+    for (let r = 0; r < N_ROWS; r++) {
+      const d  = Math.pow(r / (N_ROWS - 1 || 1), POWER);
+      const as = 0.42 + 0.58 * Math.pow(d, 0.55);
+      const hw = (W * 0.5) * (MIN_W + d * (MAX_W - MIN_W));
+      const bl = Math.min(97, (6 + d * 76) | 0);
+      rowD[r]     = d;
+      rowHW[r]    = hw;
+      rowAmpS[r]  = as;
+      rowBaseL[r] = bl;
+      rowBloom[r] = 'hsla(0,0%,' + bl + '%,0.028)';
+      rowHalo[r]  = 'hsla(0,0%,' + bl + '%,0.072)';
+    }
+    /* Colour-layer row tables */
+    colD    = new Float32Array(C_ROWS);
+    colHW   = new Float32Array(C_ROWS);
+    colAmpS = new Float32Array(C_ROWS);
+    for (let r = 0; r < C_ROWS; r++) {
+      const d = Math.pow((r + 0.5) / C_ROWS, POWER);
+      colD[r]    = d;
+      colHW[r]   = (W * 0.5) * (MIN_W + d * (MAX_W - MIN_W)) * 0.995;
+      colAmpS[r] = 0.42 + 0.58 * Math.pow(d, 0.55);
+    }
+    _gradFrame = -9999;
+  }
+
   function resize() {
     W   = window.innerWidth;
     H   = window.innerHeight;
-    /* Cap DPR more aggressively on mobile — 1.5 saves ~44% canvas pixels */
     DPR = Math.min(window.devicePixelRatio || 1, tier === 'lo' ? 1.5 : 2);
     canvas.width        = Math.round(W * DPR);
     canvas.height       = Math.round(H * DPR);
     canvas.style.width  = W + 'px';
     canvas.style.height = H + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    _gradFrame = -9999; /* invalidate gradient cache on resize */
+    precompute();
   }
 
   let resizeTimer = null;
@@ -93,12 +138,8 @@
 
   function horizY(top) { return top ?  H * (0.5 - CLEAR) : H * (0.5 + CLEAR); }
   function nearY (top) { return top ? -H * OVER           : H * (1 + OVER);    }
-  function baseY (d, top) { return horizY(top) + (nearY(top) - horizY(top)) * d; }
-  function hw    (d)      { return (W * 0.5) * (MIN_W + d * (MAX_W - MIN_W)); }
-  function ampScale(d)    { return 0.42 + 0.58 * Math.pow(d, 0.55); }
 
   /* ── wave displacement ───────────────────────────────────────────── */
-  /* lo tier uses 4 frequencies; md/hi use all 7.                      */
   function disp(wx, d, t) {
     const x = wx * 4.6, z = d * 23.0;
     let v =
@@ -115,20 +156,14 @@
   }
 
   /* ── colours ─────────────────────────────────────────────────────── */
-  function grey(d, extra, a) {
-    const l = Math.min(97, 6 + d * 76 + extra * 12);
-    return 'hsla(0,0%,' + (l | 0) + '%,' + a.toFixed(3) + ')';
-  }
-
   function prismHue(pos, dv, d, t) {
     return ((pos * 140 + t * 22 + dv * 55 + d * 80) % 360 + 360) % 360;
   }
 
-  /* ── shared buffers (sized to max N_SEGS = 110) ──────────────────── */
+  /* ── shared buffers ──────────────────────────────────────────────── */
   const rowXs = new Float32Array(111);
   const rowYs = new Float32Array(111);
 
-  /* Build a path from the shared row buffers — call once, stroke N times */
   function buildPath() {
     ctx.beginPath();
     ctx.moveTo(rowXs[0], rowYs[0]);
@@ -141,13 +176,15 @@
     ctx.stroke();
   }
 
-  /* Legacy helper used for cross-lines (builds its own path inline) */
-  function strokeBuf(lw, col) { buildPath(); strokeOnly(lw, col); }
-
   /* ── monochrome zone ─────────────────────────────────────────────── */
   function drawZone(t, top) {
-    const span = nearY(top) - horizY(top);
+    /* Hoist per-zone constants — avoids repeated function calls in loops */
+    const hY   = horizY(top);
+    const nY   = nearY(top);
+    const span = nY - hY;
     const absS = Math.abs(span);
+    const W2   = W * 0.5;
+    const mid  = N_SEGS >> 1;   /* index where wx ≈ 0 */
 
     ctx.globalCompositeOperation = 'screen';
 
@@ -157,67 +194,62 @@
         const wx = (c / N_COLS) * 2 - 1;
         ctx.beginPath();
         for (let r = 0; r < N_ROWS; r++) {
-          const d = Math.pow(r / (N_ROWS - 1), POWER);
-          const x = W * 0.5 + wx * hw(d);
-          const y = baseY(d, top) + disp(wx, d, t) * absS * AMP * ampScale(d);
+          const d  = rowD[r];
+          const x  = W2 + wx * rowHW[r];
+          const y  = hY + span * d + disp(wx, d, t) * absS * AMP * rowAmpS[r];
           r === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
         }
         ctx.lineWidth   = 0.40;
-        ctx.strokeStyle = grey(0.40, 0, 0.18);
+        ctx.strokeStyle = 'hsla(0,0%,40%,0.180)';
         ctx.stroke();
       }
     }
 
-    /* horizontal rows — far first; build path once, stroke up to 3× */
+    /* horizontal rows — build path once, stroke up to 3× */
     for (let r = 0; r < N_ROWS; r++) {
-      const d      = Math.pow(r / (N_ROWS - 1), POWER);
-      const lineHW = hw(d);
-      const by     = baseY(d, top);
+      const d     = rowD[r];
+      const hw    = rowHW[r];
+      const asAmp = rowAmpS[r];
+      const by    = hY + span * d;
+      const scale = absS * AMP * asAmp;
+      let centerDisp = 0;
 
       for (let s = 0; s <= N_SEGS; s++) {
         const wx = (s / N_SEGS) * 2 - 1;
-        rowXs[s] = W * 0.5 + wx * lineHW;
-        rowYs[s] = by + disp(wx, d, t) * absS * AMP * ampScale(d);
+        const dv = disp(wx, d, t);
+        rowXs[s] = W2 + wx * hw;
+        rowYs[s] = by + dv * scale;
+        if (s === mid) centerDisp = dv;
       }
 
-      /* lo: one pass only */
       if (tier === 'lo') {
-        strokeBuf(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)), 0.85));
+        buildPath();
+        strokeOnly(0.9 * d + 0.15,
+          'hsla(0,0%,' + Math.min(97, rowBaseL[r] + (Math.abs(centerDisp) * 12) | 0) + '%,0.850)');
         continue;
       }
 
-      /* md/hi: build path once, stroke up to 3 passes              */
       buildPath();
-      if (d > 0.14) {
-        strokeOnly(10 * d + 0.5, grey(d, 0, 0.028));          /* outer bloom */
-      }
-      if (tier === 'hi' && d > 0.08) {
-        strokeOnly(3.8 * d + 0.3, grey(d, 0, 0.072));         /* mid halo    */
-      }
-      strokeOnly(0.9 * d + 0.15, grey(d, Math.abs(disp(0, d, t)), 0.78)); /* core */
+      if (d > 0.14) strokeOnly(10  * d + 0.5, rowBloom[r]);    /* outer bloom */
+      if (tier === 'hi' && d > 0.08) strokeOnly(3.8 * d + 0.3, rowHalo[r]); /* mid halo */
+      strokeOnly(0.9 * d + 0.15,
+        'hsla(0,0%,' + Math.min(97, rowBaseL[r] + (Math.abs(centerDisp) * 12) | 0) + '%,0.780)');
     }
   }
 
-  /* ── colour diffraction layer — gradient cache ───────────────────── */
+  /* ── colour diffraction layer ────────────────────────────────────── */
   const C_PHASE = 0.72, C_SPEED = 1.18;
-  /*
-     Gradients depend only on x-position (constant between resizes) and
-     slowly-varying hue (imperceptibly stale over 3 frames).  We rebuild
-     the CanvasGradient objects every GRAD_REFRESH frames instead of every
-     frame, cutting gradient allocation and addColorStop calls by ~66%.
-     Both zones share the same cache (gradient colours are zone-agnostic).
-  */
+
   function rebuildGrads(t) {
     const N_STOPS = tier === 'hi' ? 14 : 7;
     const tc = t * C_SPEED + C_PHASE;
     if (!_grads || _grads.length !== C_ROWS) _grads = new Array(C_ROWS);
     for (let r = 0; r < C_ROWS; r++) {
-      const d      = Math.pow((r + 0.5) / C_ROWS, POWER);
-      const lineHW = hw(d) * 0.995;
-      const x0     = W * 0.5 - lineHW;
-      const x1     = W * 0.5 + lineHW;
-      const core   = ctx.createLinearGradient(x0, 0, x1, 0);
-      const glow   = ctx.createLinearGradient(x0, 0, x1, 0);
+      const d    = colD[r];
+      const x0   = W * 0.5 - colHW[r];
+      const x1   = W * 0.5 + colHW[r];
+      const core = ctx.createLinearGradient(x0, 0, x1, 0);
+      const glow = ctx.createLinearGradient(x0, 0, x1, 0);
       for (let g = 0; g <= N_STOPS; g++) {
         const pos = g / N_STOPS;
         const wx  = pos * 2 - 1;
@@ -238,29 +270,28 @@
 
   function drawColourLayer(t, top) {
     if (C_ROWS === 0) return;
-
-    /* Rebuild gradient cache if stale */
     if (_frameCount - _gradFrame >= GRAD_REFRESH) rebuildGrads(t);
 
-    const tc   = t * C_SPEED + C_PHASE;
-    const span = nearY(top) - horizY(top);
+    const hY   = horizY(top);
+    const span = nearY(top) - hY;
     const absS = Math.abs(span);
+    const tc   = t * C_SPEED + C_PHASE;
+    const W2   = W * 0.5;
 
     ctx.globalCompositeOperation = 'screen';
 
     for (let r = 0; r < C_ROWS; r++) {
-      const d      = Math.pow((r + 0.5) / C_ROWS, POWER);
-      const lineHW = hw(d) * 0.995;
-      const by     = baseY(d, top);
-      const as_amp = absS * AMP * ampScale(d);
+      const d     = colD[r];
+      const hw    = colHW[r];
+      const by    = hY + span * d;
+      const scale = absS * AMP * colAmpS[r];
 
       for (let s = 0; s <= N_SEGS; s++) {
         const wx = (s / N_SEGS) * 2 - 1;
-        rowXs[s] = W * 0.5 + wx * lineHW;
-        rowYs[s] = by + disp(wx, d, tc) * as_amp;
+        rowXs[s] = W2 + wx * hw;
+        rowYs[s] = by + disp(wx, d, tc) * scale;
       }
 
-      /* Build path once, stroke glow + core */
       const g = _grads[r];
       buildPath();
       strokeOnly(9   * d + 1.2, g.glow);
@@ -268,7 +299,7 @@
     }
   }
 
-  /* ── render loop with fps cap ────────────────────────────────────── */
+  /* ── render loop ─────────────────────────────────────────────────── */
   const BASE_SPEED = 0.00025;
   const SLOW_SPEED = 0.00004;
   let lastMs = 0;
@@ -276,7 +307,6 @@
   function frame(ms) {
     requestAnimationFrame(frame);
 
-    /* Throttle to FPS_TARGET on mobile */
     const targetInterval = 1000 / FPS_TARGET;
     if (ms - lastMs < targetInterval - 1) return;
     lastMs = ms;
