@@ -27,6 +27,10 @@
   let tier = 'hi';
   let N_ROWS, N_COLS, N_SEGS, C_ROWS, FPS_TARGET;
 
+  /* ── zone geometry constants (declared early — used in precompute) ── */
+  const CLEAR = 0.26, OVER = 0.04, MIN_W = 0.55, MAX_W = 1.22;
+  const POWER = 1.80, AMP = 1.00;
+
   /* ── gradient cache state ────────────────────────────────────────── */
   const GRAD_REFRESH = 3;
   let _grads      = null;
@@ -133,9 +137,6 @@
   motionMQL.addEventListener('change', function (e) { slowMotion = e.matches; });
 
   /* ── zone geometry ───────────────────────────────────────────────── */
-  const CLEAR = 0.26, OVER = 0.04, MIN_W = 0.55, MAX_W = 1.22;
-  const POWER = 1.80, AMP = 1.00;
-
   function horizY(top) { return top ?  H * (0.5 - CLEAR) : H * (0.5 + CLEAR); }
   function nearY (top) { return top ? -H * OVER           : H * (1 + OVER);    }
 
