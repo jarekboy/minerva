@@ -35,6 +35,12 @@
   let tier = 'hi';
   let N_ROWS, N_COLS, N_SEGS, C_ROWS, FPS_TARGET;
 
+  /* ── gradient cache state (declared early — referenced in applyTier/resize) */
+  const GRAD_REFRESH = 3;
+  let _grads      = null;
+  let _gradFrame  = -9999;
+  let _frameCount = 0;
+
   function applyTier(w) {
     const forced = _tierParam === 'lo' || _tierParam === 'md' || _tierParam === 'hi'
       ? _tierParam : null;
@@ -201,10 +207,6 @@
      frame, cutting gradient allocation and addColorStop calls by ~66%.
      Both zones share the same cache (gradient colours are zone-agnostic).
   */
-  const GRAD_REFRESH = 3;
-  let _grads     = null;
-  let _gradFrame = -9999;
-
   function rebuildGrads(t) {
     const N_STOPS = tier === 'hi' ? 14 : 7;
     const tc = t * C_SPEED + C_PHASE;
@@ -269,8 +271,7 @@
   /* ── render loop with fps cap ────────────────────────────────────── */
   const BASE_SPEED = 0.00025;
   const SLOW_SPEED = 0.00004;
-  let lastMs     = 0;
-  let _frameCount = 0;
+  let lastMs = 0;
 
   function frame(ms) {
     requestAnimationFrame(frame);
